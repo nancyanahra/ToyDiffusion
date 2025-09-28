@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from datetime import datetime
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.datasets import make_moons
 
 
@@ -97,56 +98,62 @@ n_epochs = 2000
 # a sample is a single data point (2d coord here)
 #batch_size = 128
 batch_size = 2000
+dataset = TensorDataset(X)
+# samples are mixed up each epoch
+dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 #loop over the epochs, aka repeat trainig process 2000 times
 for epoch in range(n_epochs):
     # Sample random batch of data
     #
-    idx = torch.randint(0, n_samples, (batch_size,))
+   # idx = torch.randint(0, n_samples, (batch_size,))
     # x0 is the clean data for this batch, shape (batch_size, 2) - 128 points each with 2 features (x,y)
     #essentially: a tesnor of shape (128, 2)
-    x0 = X[idx]
+    #x0 = X[idx]
     
-    # Sample random timestep
-    # sample a random timestep for each point/sample in the batch
-    t = torch.randint(0, T, (batch_size,))
-    
+    for batch_x0 in dataLoader:
+        x0 = batch_x0[0]
+        current_batch_size = x0.shape[0]
+        # Sample random timestep
+        # sample a random timestep for each point/sample in the batch
+        t = torch.randint(0, T, (current_batch_size,)).to(x0.device)  # (batch_size,)
+        
 
-    # Forward diffusion q(x_t | x_0)
+        # Forward diffusion q(x_t | x_0)
 
-    # this makes random gaussian noise with the same shape as x0, so (128,2)
-    # each row is noise sampled from a normal distribution
-    #this is the true noise that the model will try to predict later
-    noise = torch.randn_like(x0)
-    # alpha_bar is precomputed (200,) tensor - one value per timestep
-    #t is (128,), so alpha_bar[t] is (128,) - one value per sample in the batc
-    #it picks the value for each sample's timestep t
-    #unsqueeze(-1) makes it (128,1) so we can broadcast in the next step
-    alpha_bar_t = alpha_bar[t].unsqueeze(-1)
-    # THIS IS THE FORWARD DIFFUSION EQUATION
-    # x_t is the noised version of x0 at timestep t
-    # At small t, noise is small, at large t, noise is larg
-    x_t = torch.sqrt(alpha_bar_t)*x0 + torch.sqrt(1-alpha_bar_t)*noise
-    
-    # Predict noise
-    # feed the noised sample x_t and its timestep t
-    # model tries to guess the exact noise that was added to x0 to get x_t
-    # x_t is (128,2), t.float() is (128,) - one
-    #noise_pred is (128,2) - the model's predicted noise for each sample
-    noise_pred = model(x_t, t.float())
-    
-    # Compute loss (MSE between true noise and predicted noise
-    # the closer loss is to 0, the better the model is at predicting the noise added at each step
-    # loss is a scalar tensor
-    loss = F.mse_loss(noise_pred, noise)
+        # this makes random gaussian noise with the same shape as x0, so (128,2)
+        # each row is noise sampled from a normal distribution
+        #this is the true noise that the model will try to predict later
+        noise = torch.randn_like(x0)
+        # alpha_bar is precomputed (200,) tensor - one value per timestep
+        #t is (128,), so alpha_bar[t] is (128,) - one value per sample in the batc
+        #it picks the value for each sample's timestep t
+        #unsqueeze(-1) makes it (128,1) so we can broadcast in the next step
+        alpha_bar_t = alpha_bar[t].unsqueeze(-1)
+        # THIS IS THE FORWARD DIFFUSION EQUATION
+        # x_t is the noised version of x0 at timestep t
+        # At small t, noise is small, at large t, noise is larg
+        x_t = torch.sqrt(alpha_bar_t)*x0 + torch.sqrt(1-alpha_bar_t)*noise
+        
+        # Predict noise
+        # feed the noised sample x_t and its timestep t
+        # model tries to guess the exact noise that was added to x0 to get x_t
+        # x_t is (128,2), t.float() is (128,) - one
+        #noise_pred is (128,2) - the model's predicted noise for each sample
+        noise_pred = model(x_t, t.float())
+        
+        # Compute loss (MSE between true noise and predicted noise
+        # the closer loss is to 0, the better the model is at predicting the noise added at each step
+        # loss is a scalar tensor
+        loss = F.mse_loss(noise_pred, noise)
 
-    #stopped here again
-    # clears old gradients
-    optimizer.zero_grad()
-    #computes newe gradients of loss with respect to all the weights using backprop
-    loss.backward()
-    # updates weights with gradient descent (adam is a gradient descent? variant)
-    optimizer.step()
+        #stopped here again
+        # clears old gradients
+        optimizer.zero_grad()
+        #computes newe gradients of loss with respect to all the weights using backprop
+        loss.backward()
+        # updates weights with gradient descent (adam is a gradient descent? variant)
+        optimizer.step()
 
 
     # Print loss every 200 epochs
