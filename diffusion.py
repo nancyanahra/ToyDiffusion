@@ -1,11 +1,25 @@
 import torch
 import torch.nn as nn
+import os 
+import glob
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from datetime import datetime
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.datasets import make_moons
 
+
+def cleanup_files(patterns):
+    for pattern in patterns:
+        for file_path in glob.glob(pattern):
+            try:
+                os.remove(file_path)
+                #print(f"Deleted file: {file_path}")
+            except Exception as e:
+                print(f"Error deleting file {file_path}: {e}")
+
+# Clean up old generated files
+cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png"])
 
 # 1. GENERATE 2D two-moons data
 
@@ -90,6 +104,7 @@ model = DenoiseMLP()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 
+epoch_losses = []
 # 4. TRAINING LOOP
 
 # epochs: total number of times the entire dataset is passed through the model
@@ -110,6 +125,8 @@ for epoch in range(n_epochs):
     # x0 is the clean data for this batch, shape (batch_size, 2) - 128 points each with 2 features (x,y)
     #essentially: a tesnor of shape (128, 2)
     #x0 = X[idx]
+
+    batch_losses = []
     
     for batch_x0 in dataLoader:
         x0 = batch_x0[0]
@@ -154,6 +171,10 @@ for epoch in range(n_epochs):
         loss.backward()
         # updates weights with gradient descent (adam is a gradient descent? variant)
         optimizer.step()
+        batch_losses.append(loss.item())
+
+    avg_epoch_loss = sum(batch_losses) / len(batch_losses)
+    epoch_losses.append(avg_epoch_loss)
 
 
     # Print loss every 200 epochs
@@ -172,7 +193,20 @@ for epoch in range(n_epochs):
             plt.close()
 """
 
-  
+
+plt.figure(figsize=(10, 6))
+# Plot the list of average epoch losses
+plt.plot(range(n_epochs), epoch_losses)
+plt.title('Training Loss Over Epochs')
+plt.xlabel('Epoch')
+plt.ylabel('Mean Squared Error (MSE) Loss')
+plt.grid(True)
+# Save the plot with a timestamp
+timestamp_loss = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
+
+plt.show()
+plt.close()
 
     
 
