@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import os 
 import glob
+import numpy as np
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -104,6 +105,9 @@ model = DenoiseMLP()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 
+
+epochs_to_plot = [0, 1000, 1999]
+
 epoch_losses = []
 # 4. TRAINING LOOP
 
@@ -125,9 +129,11 @@ for epoch in range(n_epochs):
     # x0 is the clean data for this batch, shape (batch_size, 2) - 128 points each with 2 features (x,y)
     #essentially: a tesnor of shape (128, 2)
     #x0 = X[idx]
+    if epoch in epochs_to_plot[:-1]:
+    # Save model state
+        torch.save(model.state_dict(), f"denoise_model_epoch{epoch}.pth")
 
     batch_losses = []
-    
     for batch_x0 in dataLoader:
         x0 = batch_x0[0]
         current_batch_size = x0.shape[0]
@@ -177,6 +183,7 @@ for epoch in range(n_epochs):
     epoch_losses.append(avg_epoch_loss)
 
 
+
     # Print loss every 200 epochs
     #loss.item() gets the raw float value of the loss tensor and converts to python float for easier printing
     if epoch % 200 == 0:
@@ -208,7 +215,81 @@ plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
 plt.show()
 plt.close()
 
+# Create a grid of points for visualization
+# this grid will be used to visualize the learned denoising function over a 2D
+GRID_SIZE = 20
+x_min, x_max = -2.5, 2.5
+y_min, y_max = -1.5, 1.5
+x_coords = np.linspace(x_min, x_max, GRID_SIZE)
+y_coords = np.linspace(y_min, y_max, GRID_SIZE)
+X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+
+# standard process for generating a drig of 2d points and converting to pytorch tensor
+GRID_POINTS = torch.tensor(np.vstack([X_grid.ravel(), Y_grid.ravel()]).T, dtype=torch.float32)
+
+
+#timesteps to plot, 10 plots evenly spaced from 1 to T-1
+t_to_plot =  np.linspace(1, T, 5, dtype=int, endpoint=True)-1 # 10 timesteps from 1 to T
     
+
+figure, axes = plt.subplots(len(epochs_to_plot), len(t_to_plot), figsize=(12,5), sharex=True, sharey=True)
+figure.suptitle(r'Learned Noise Field $\mathbf{\epsilon}_\theta(\mathbf{x}, t)$ Across Training and Timesteps', fontsize=16)
+
+model.eval()  # Set model to evaluation mode
+
+#loop over saved epochs (rows) and timesteps (cols)
+for i, epoch in enumerate(epochs_to_plot):
+    if epoch != 1999: # For intermediate epochs (0, 667, 1334)
+        try:
+            checkpoint = torch.load(f"denoise_model_epoch{epoch}.pth", map_location='cpu')
+            model.load_state_dict(checkpoint)
+            # print(f"Loaded model state for Epoch {epoch} successfully.") # Optional print
+        except FileNotFoundError:
+            # print(f"Warning: Checkpoint file denoise_model_epoch{epoch}.pth not found. Skipping plot row.") # Optional print
+            continue
+
+    with torch.no_grad():
+        for j, t_index in enumerate(t_to_plot):
+
+          
+            t_batch = torch.full((GRID_POINTS.shape[0],), t_index, dtype=torch.float32)
+            predicted_noise_tensor = model(GRID_POINTS, t_batch)
+
+            alpha_t = alpha[t_index]
+            alpha_bar_t = alpha_bar[t_index]
+            beta_t = beta[t_index]
+
+                 # The mean of the reverse step:
+            mu_tilde = (1 / torch.sqrt(alpha_t)) * (GRID_POINTS - (beta_t / torch.sqrt(1 - alpha_bar_t)) * predicted_noise_tensor)
+            denoising_vector = (mu_tilde - GRID_POINTS).numpy()
+
+          
+            U = denoising_vector[:, 0].reshape(GRID_SIZE, GRID_SIZE)
+            V = denoising_vector[:, 1].reshape(GRID_SIZE, GRID_SIZE)
+            ax = axes[i, j]
+
+            #plot the vector field using quiver
+            Q =ax.quiver(X_grid, Y_grid, U, V, color='blue', angles='xy', scale_units='xy', scale=0.2, width=0.005)
+
+            # Optional: Plot the original data distribution in the background for context
+            #ax.scatter(X[:,0].numpy(), X[:,1].numpy(), s=1, alpha=0.1, color='red')
+
+            if i == 0:
+                ax.set_title(f'Timestep {t_index}', fontsize=12)
+            if j == 0:
+                ax.set_ylabel(f'Epoch {epoch}', fontsize=12)
+
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+
+# model.train()
+plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
+timestamp_vf = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"noise_vector_field_{timestamp_vf}.png", dpi=300)
+
 
 # 5. SAMPLING FROM LEARNED MODEL
 
