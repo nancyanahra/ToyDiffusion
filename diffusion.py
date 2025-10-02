@@ -20,7 +20,7 @@ def cleanup_files(patterns):
                 print(f"Error deleting file {file_path}: {e}")
 
 # Clean up old generated files
-cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png"])
+cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png", "noise_vector_field_*.png", "denoise_model_epoch*.pth"])
 
 # 1. GENERATE 2D two-moons data
 
@@ -212,12 +212,12 @@ plt.grid(True)
 timestamp_loss = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
 
-plt.show()
-plt.close()
+# plt.show()
+# plt.close()
 
 # Create a grid of points for visualization
 # this grid will be used to visualize the learned denoising function over a 2D
-GRID_SIZE = 20
+GRID_SIZE = 12 
 x_min, x_max = -2.5, 2.5
 y_min, y_max = -1.5, 1.5
 x_coords = np.linspace(x_min, x_max, GRID_SIZE)
@@ -236,6 +236,8 @@ figure, axes = plt.subplots(len(epochs_to_plot), len(t_to_plot), figsize=(12,5),
 figure.suptitle(r'Learned Noise Field $\mathbf{\epsilon}_\theta(\mathbf{x}, t)$ Across Training and Timesteps', fontsize=16)
 
 model.eval()  # Set model to evaluation mode
+
+val_batch_losses = []
 
 #loop over saved epochs (rows) and timesteps (cols)
 for i, epoch in enumerate(epochs_to_plot):
