@@ -53,7 +53,7 @@ plt.show()
 # 2. DEFINE DIFFUSION SCHEDULE
 
 # this is the total number of times we will add a tiny bit of noise (scalar int)
-T = 50 # number of diffusion steps
+T = 200 # number of diffusion steps
 # Beta creates a 1d tensor of length T (200) with values linearly spaced from 0.0001 to 0.02
 # Each value represents the variance of the noise added at each diffusion step
 # Smaller values at the start, larger at the end;larger noise as we progress through diffusion steps
@@ -78,13 +78,16 @@ class DenoiseMLP(nn.Module):
         #first layer takes in 2d coords + 1 time embedding
         # and it outputs 128 features
         #weight shape: (128,3), bias shape: (128,)
-        self.fc1 = nn.Linear(784+1, 128)  # +1 for time embedding
+        self.fc1 = nn.Linear(784+1, 512)  # +1 for time embedding
         #hidden, second linear layer
         # takes in 128 features, outputs 128 features
         #weight shape: (128,128), bias shape: (128,)
-        self.fc2 = nn.Linear(128, 128)
+        self.fc2 = nn.Linear(512, 512)
         #final layer takes in 128 features, outputs 2d coords (the predicted noise)
-        self.fc3 = nn.Linear(128, 784)
+        self.fc3 = nn.Linear(512, 512)
+        self.fc4 = nn.Linear(512, 512)
+
+        self.fc_out = nn.Linear(512, 784)
     
 
     # Assume a batch size of N
@@ -111,9 +114,11 @@ class DenoiseMLP(nn.Module):
         # another Linear transform fc2: (N,128) *
         #  (128,128)^T + bias → (N,128).
         h = F.relu(self.fc2(h))
+        h = F.relu(self.fc3(h))
+        h = F.relu(self.fc4(h))
         # Final linear layer fc3: (N,128) @ (128,2)^T + bias → (N,784).
         #Returned tensor has shape (N, 784). Interpretation: a two-component vector per input point (e.g., predicted noise )
-        return self.fc3(h)
+        return self.fc_out(h)
 
 # Instantiate model and optimizer
 model = DenoiseMLP()
@@ -164,7 +169,7 @@ for epoch in range(n_epochs):
         # THIS IS THE FORWARD DIFFUSION EQUATION
         # x_t is the noised version of x0 at timestep t
         # At small t, noise is small, at large t, noise is larg
-        x_t = torch.sqrt(alpha_bar_t)*x0 + torch.sqrt(1-alpha_bar_t)*noise
+        x_t = torch.sqrt(alpha_bar_t.view(-1,1,1,1))*x0 + torch.sqrt(1-alpha_bar_t.view(-1,1,1,1))*noise
         
         # Predict noise
         # feed the noised sample x_t and its timestep t
@@ -176,7 +181,7 @@ for epoch in range(n_epochs):
         # Compute loss (MSE between true noise and predicted noise
         # the closer loss is to 0, the better the model is at predicting the noise added at each step
         # loss is a scalar tensor
-        loss = F.mse_loss(noise_pred, noise)
+        loss = F.mse_loss(noise_pred, noise.view(current_batch_size, -1))
 
         #stopped here again
         # clears old gradients
@@ -228,6 +233,8 @@ def sample(model, n_samples):
         t_batch = torch.full((n_samples,), t, dtype=torch.float32)
         # calls the denoiser model to predict the noise in x at timestep t
         # x is (n_samples, 2), t_batch is (n_samples,)
+
+        x_reshaped = x.view(n_samples, C, W, H)
         predicted_noise = model(x, t_batch)
         #the following 3 lines index the precomputed schedules to get the scalar values for the current timestep t
         # alpha_t represents the portion of the original data retained at step t
@@ -269,11 +276,11 @@ def sample(model, n_samples):
     
     #finally, return the generated samples after all timesteps
     # x should now be a (n_samples, 2) tensor of generated 2d points that look like the two-moons data even though they started as pure noise
-    return x
+    return x.view(n_samples, C, W, H).clamp(-1, 1)  # clamp to [-1, 1] range
 
 
 # # Generate samples
-samples = sample(model, 200)
+samples = sample(model, 10)
 
 # # 6. Print one random sample
 
@@ -282,16 +289,22 @@ print("One sample from generated data:", samples[torch.randint(0, samples.shape[
 
 
 
-
-
-# 7. 2D histogram
+# 6. Display generated images
+# Reshape the samples for display: (N, 1, 28, 28) -> (N, 28, 28)
+samples_display = samples.cpu().numpy()[:, 0, :, :] 
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-plt.figure(figsize=(8,6))
-plt.hist2d(samples[:,0].numpy(), samples[:,1].numpy(), bins=100, density=True, cmap='viridis')
-plt.colorbar(label='Density')
-plt.xlabel('x')
-plt.ylabel('y')
-plt.title('2D Histogram of Generated Samples')
-plt.savefig(f"two_moons_hist_{timestamp}.png", dpi=300)
+# plt.figure(figsize=(8,6))
+# plt.hist2d(samples[:,0].numpy(), samples[:,1].numpy(), bins=100, density=True, cmap='viridis')
+# plt.colorbar(label='Density')
+# plt.xlabel('x')
+# plt.ylabel('y')
+# plt.title('2D Histogram of Generated Samples')
+
+fig, ax = plt.subplots(1, 10, figsize=(15, 2))
+for i in range(10):
+    ax[i].imshow(samples_display[i], cmap='gray')
+    ax[i].axis('off')
+fig.suptitle('Generated MNIST Samples')
+plt.savefig(f"mnist{timestamp}.png", dpi=300)
