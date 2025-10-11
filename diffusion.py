@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 import os 
 import glob
+import numpy as np
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import matplotlib
 from datetime import datetime
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.datasets import make_moons
@@ -19,7 +21,7 @@ def cleanup_files(patterns):
                 print(f"Error deleting file {file_path}: {e}")
 
 # Clean up old generated files
-cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png"])
+cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png", "noise_vector_field_*.png", "denoise_model_epoch*.pth", "diffusion_trajectories_*.png"])
 
 # 1. GENERATE 2D two-moons data
 
@@ -41,7 +43,7 @@ plt.title("Two Moons Dataset")
 # 2. DEFINE DIFFUSION SCHEDULE
 
 # this is the total number of times we will add a tiny bit of noise (scalar int)
-T = 200  # number of diffusion steps
+T = 1000  # number of diffusion steps
 # Beta creates a 1d tensor of length T (200) with values linearly spaced from 0.0001 to 0.02
 # Each value represents the variance of the noise added at each diffusion step
 # Smaller values at the start, larger at the end;larger noise as we progress through diffusion steps
@@ -104,18 +106,33 @@ model = DenoiseMLP()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 
+
+epochs_to_plot = [0, 1000, 1999]
+
 epoch_losses = []
 # 4. TRAINING LOOP
 
 # epochs: total number of times the entire dataset is passed through the model
 n_epochs = 2000
-# batch size = number of samples processed in one forward/backward pass (before the models paramters are updated during training)
+# batch size = number of samples processed in one forward/backward pass
 # a sample is a single data point (2d coord here)
 #batch_size = 128
 batch_size = 2000
-dataset = TensorDataset(X)
-# samples are mixed up each epoch
-dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+# --- create a small validation split so we can track val loss ---
+val_frac = 0.1
+n_val = int(n_samples * val_frac)
+n_train = n_samples - n_val
+X_train = X[:n_train]
+X_val = X[n_train:]
+
+train_dataset = TensorDataset(X_train)
+val_dataset = TensorDataset(X_val)
+
+# training DataLoader
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+# validation DataLoader (use full-batch since dataset is small)
+val_loader = DataLoader(val_dataset, batch_size=max(1, n_val), shuffle=False)
 
 #loop over the epochs, aka repeat trainig process 2000 times
 for epoch in range(n_epochs):
@@ -125,10 +142,13 @@ for epoch in range(n_epochs):
     # x0 is the clean data for this batch, shape (batch_size, 2) - 128 points each with 2 features (x,y)
     #essentially: a tesnor of shape (128, 2)
     #x0 = X[idx]
+    if epoch in epochs_to_plot[:-1]:
+    # Save model state
+        torch.save(model.state_dict(), f"denoise_model_epoch{epoch}.pth")
 
     batch_losses = []
-    
-    for batch_x0 in dataLoader:
+    # Training loop over train_loader
+    for batch_x0 in train_loader:
         x0 = batch_x0[0]
         current_batch_size = x0.shape[0]
         # Sample random timestep
@@ -176,6 +196,29 @@ for epoch in range(n_epochs):
     avg_epoch_loss = sum(batch_losses) / len(batch_losses)
     epoch_losses.append(avg_epoch_loss)
 
+    # Compute validation loss each epoch
+    model.eval()
+    val_batch_losses = []
+    with torch.no_grad():
+        for val_x0 in val_loader:
+            x0_val = val_x0[0]
+            current_val_bs = x0_val.shape[0]
+            t_val = torch.randint(0, T, (current_val_bs,)).to(x0_val.device)
+            noise_val = torch.randn_like(x0_val)
+            alpha_bar_t_val = alpha_bar[t_val].unsqueeze(-1)
+            x_t_val = torch.sqrt(alpha_bar_t_val) * x0_val + torch.sqrt(1 - alpha_bar_t_val) * noise_val
+            noise_pred_val = model(x_t_val, t_val.float())
+            loss_val = F.mse_loss(noise_pred_val, noise_val)
+            val_batch_losses.append(loss_val.item())
+
+    avg_val_loss = float(sum(val_batch_losses) / len(val_batch_losses)) if len(val_batch_losses) > 0 else float('nan')
+    # Keep a running list of validation losses for plotting
+    if 'val_epoch_losses' not in globals():
+        val_epoch_losses = []
+    val_epoch_losses.append(avg_val_loss)
+    model.train()
+
+
 
     # Print loss every 200 epochs
     #loss.item() gets the raw float value of the loss tensor and converts to python float for easier printing
@@ -196,19 +239,99 @@ for epoch in range(n_epochs):
 
 plt.figure(figsize=(10, 6))
 # Plot the list of average epoch losses
-plt.plot(range(n_epochs), epoch_losses)
-plt.title('Training Loss Over Epochs')
+plt.plot(range(n_epochs), epoch_losses, label='train')
+# Plot validation loss if available
+if 'val_epoch_losses' in globals() and len(val_epoch_losses) == n_epochs:
+    plt.plot(range(n_epochs), val_epoch_losses, label='val')
+plt.title('Training and Validation Loss Over Epochs')
 plt.xlabel('Epoch')
 plt.ylabel('Mean Squared Error (MSE) Loss')
 plt.grid(True)
+plt.legend()
 # Save the plot with a timestamp
 timestamp_loss = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
 
-plt.show()
-plt.close()
+# plt.show()
+# plt.close()
 
+# Create a grid of points for visualization
+# this grid will be used to visualize the learned denoising function over a 2D
+GRID_SIZE = 12 
+x_min, x_max = -2.5, 2.5
+y_min, y_max = -1.5, 1.5
+x_coords = np.linspace(x_min, x_max, GRID_SIZE)
+y_coords = np.linspace(y_min, y_max, GRID_SIZE)
+X_grid, Y_grid = np.meshgrid(x_coords, y_coords)
+
+# standard process for generating a drig of 2d points and converting to pytorch tensor
+GRID_POINTS = torch.tensor(np.vstack([X_grid.ravel(), Y_grid.ravel()]).T, dtype=torch.float32)
+
+
+#timesteps to plot, 10 plots evenly spaced from 1 to T-1
+t_to_plot =  np.linspace(1, T, 5, dtype=int, endpoint=True)-1 # 10 timesteps from 1 to T
     
+
+figure, axes = plt.subplots(len(epochs_to_plot), len(t_to_plot), figsize=(12,5), sharex=True, sharey=True)
+figure.suptitle(r'Learned Noise Field $\mathbf{\epsilon}_\theta(\mathbf{x}, t)$ Across Training and Timesteps', fontsize=16)
+
+model.eval()  # Set model to evaluation mode
+
+val_batch_losses = []
+
+#loop over saved epochs (rows) and timesteps (cols)
+for i, epoch in enumerate(epochs_to_plot):
+    if epoch != 1999: # For intermediate epochs (0, 667, 1334)
+        try:
+            checkpoint = torch.load(f"denoise_model_epoch{epoch}.pth", map_location='cpu')
+            model.load_state_dict(checkpoint)
+            # print(f"Loaded model state for Epoch {epoch} successfully.") # Optional print
+        except FileNotFoundError:
+            # print(f"Warning: Checkpoint file denoise_model_epoch{epoch}.pth not found. Skipping plot row.") # Optional print
+            continue
+
+    with torch.no_grad():
+        for j, t_index in enumerate(t_to_plot):
+
+          
+            t_batch = torch.full((GRID_POINTS.shape[0],), t_index, dtype=torch.float32)
+            predicted_noise_tensor = model(GRID_POINTS, t_batch)
+
+            alpha_t = alpha[t_index]
+            alpha_bar_t = alpha_bar[t_index]
+            beta_t = beta[t_index]
+
+                 # The mean of the reverse step:
+            mu_tilde = (1 / torch.sqrt(alpha_t)) * (GRID_POINTS - (beta_t / torch.sqrt(1 - alpha_bar_t)) * predicted_noise_tensor)
+            denoising_vector = (mu_tilde - GRID_POINTS).numpy()
+
+          
+            U = denoising_vector[:, 0].reshape(GRID_SIZE, GRID_SIZE)
+            V = denoising_vector[:, 1].reshape(GRID_SIZE, GRID_SIZE)
+            ax = axes[i, j]
+
+            #plot the vector field using quiver
+            Q =ax.quiver(X_grid, Y_grid, U, V, color='blue', angles='xy', scale_units='xy', scale=0.2, width=0.005)
+
+            # Optional: Plot the original data distribution in the background for context
+            #ax.scatter(X[:,0].numpy(), X[:,1].numpy(), s=1, alpha=0.1, color='red')
+
+            if i == 0:
+                ax.set_title(f'Timestep {t_index}', fontsize=12)
+            if j == 0:
+                ax.set_ylabel(f'Epoch {epoch}', fontsize=12)
+
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+
+# model.train()
+plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
+timestamp_vf = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"noise_vector_field_{timestamp_vf}.png", dpi=300)
+
 
 # 5. SAMPLING FROM LEARNED MODEL
 
@@ -253,7 +376,7 @@ def sample(model, n_samples):
         if t > 0:
             x += torch.sqrt(beta_t) * torch.randn_like(x) ###
 
-        if t in [199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
+        if t in [999, 500, 400, 500, 100, 40, 30, 20, 15, 10, 5, 0]:
             #plt.scatter(x[:,0], x[:,1], s=2)
             #plt.title(f"Generated Data at Timestep {t}")
             #plt.savefig(f"generated_data_t{t}.png", dpi=300)
@@ -274,8 +397,180 @@ def sample(model, n_samples):
     return x
 
 
+
+
 # # Generate samples
 samples = sample(model, 200000)
+
+# Number of random points to track (set to 1 to trace a single trajectory)
+N_TRACK = 1
+tracked_x_initial = torch.randn(N_TRACK, 2)
+trajectory = torch.zeros(T + 1, N_TRACK, 2)
+trajectory[T] = tracked_x_initial.clone()
+
+@torch.no_grad()
+def sample_and_track(model, x_start):
+    x = x_start.clone()
+    # store initial x_T (already set outside)
+    for t in reversed(range(T)):
+        t_batch = torch.full((x.shape[0],), t, dtype=torch.float32)
+        predicted_noise = model(x, t_batch)
+        alpha_t = alpha[t]
+        alpha_bar_t = alpha_bar[t]
+        beta_t = beta[t]
+
+        mu_tilde = 1/torch.sqrt(alpha_t) * (x - (1-alpha_t)/torch.sqrt(1-alpha_bar_t)*predicted_noise)
+        if t > 0:
+            z = torch.randn_like(x)
+            x = mu_tilde + torch.sqrt(beta_t) * z
+        else:
+            x = mu_tilde
+
+        trajectory[t] = x.clone()
+
+    return x, trajectory
+
+print(f"\nTracking the trajectory of {N_TRACK} points...")
+final_tracked_samples, full_trajectory = sample_and_track(model, tracked_x_initial)
+print("Tracking complete.")
+
+# TRAJECTORY VISUALIZATION (replacement)
+
+# Multi-panel trajectories: show partial reverse paths truncated at several timesteps
+# We create 5 panels for timesteps ranging from T down to 0 so you can compare
+steps_to_plot = [T, 750, 500, 250, 0]
+n_cols = len(steps_to_plot)
+
+
+# Create figure with one row and n_cols columns
+fig_multi, axes_multi = plt.subplots(1, n_cols, figsize=(3 * n_cols, 4), sharex=True, sharey=True)
+fig_multi.suptitle('Reverse Trajectories Truncated at Different Timesteps', fontsize=14)
+axes_multi = np.atleast_1d(axes_multi)
+
+# Prepare colors for each tracked particle
+base_cmap = matplotlib.colormaps.get_cmap('tab10')
+if N_TRACK <= 10:
+    track_colors = [base_cmap(i) for i in range(N_TRACK)]
+else:
+    track_colors = [base_cmap(i % 10) for i in range(N_TRACK)]
+
+# Try to compute a smooth KDE for the ground-truth density using scipy if available
+use_kde = False
+try:
+    from scipy.stats import gaussian_kde
+    data_for_kde = np.vstack([X[:, 0].numpy(), X[:, 1].numpy()])
+    kde = gaussian_kde(data_for_kde)
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200), np.linspace(y_min, y_max, 200))
+    grid_coords = np.vstack([xx.ravel(), yy.ravel()])
+    zz = kde(grid_coords).reshape(xx.shape)
+    use_kde = True
+except Exception:
+    # fall back to histogram-based contour
+    H, xedges, yedges = np.histogram2d(X[:, 0].numpy(), X[:, 1].numpy(), bins=100, range=[[x_min, x_max], [y_min, y_max]], density=True)
+    Xc = 0.5 * (xedges[:-1] + xedges[1:])
+    Yc = 0.5 * (yedges[:-1] + yedges[1:])
+    Xc_grid, Yc_grid = np.meshgrid(Xc, Yc)
+    levels = np.linspace(H.min(), H.max(), 6)[1:]
+
+for k, t_step in enumerate(steps_to_plot):
+    ax = axes_multi[k]
+
+    # For each tracked point, plot the path from x_T down to x_t_step (inclusive)
+    for i in range(N_TRACK):
+        path_indices = list(range(T, t_step - 1, -1))  # T down to t_step
+        path = full_trajectory[path_indices, i]  # (#steps, 2)
+        x_i = path[:, 0].cpu().numpy()
+        y_i = path[:, 1].cpu().numpy()
+        ax.plot(x_i, y_i, color=track_colors[i], alpha=0.25, linewidth=1)
+
+        # Mark the head (position at t_step)
+        head = full_trajectory[t_step, i]
+        ax.plot(head[0].cpu().numpy(), head[1].cpu().numpy(), 'o', color=track_colors[i], markersize=6, markeredgecolor='black', markeredgewidth=0.6, zorder=3)
+
+    # Overlay ground-truth density silhouette behind paths (KDE preferred)
+    if use_kde:
+        ax.contourf(xx, yy, zz, levels=10, cmap='Greys', alpha=0.35, zorder=1)
+    else:
+        ax.contourf(Xc_grid, Yc_grid, H.T, levels=levels, cmap='Greys', alpha=0.35, zorder=1)
+
+    ax.set_title(f't = {t_step}', fontsize=12)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+timestamp_multi = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"diffusion_trajectories_multistep_{timestamp_multi}.png", dpi=300)
+plt.close(fig_multi)
+print(f"Multi-step trajectory visualization saved to diffusion_trajectories_multistep_{timestamp_multi}.png")
+
+# Experiment 2: Analyze stochasticity from a single starting point
+# Run the reverse process multiple times from the exact same x_T and plot the different paths/endpoints
+
+# Number of repeated runs starting from the same initial noise point
+n_runs = 5
+repeated_trajs = []
+
+print(f"\nRunning Experiment 2: {n_runs} runs from the same starting point...")
+for run_idx in range(n_runs):
+    # sample_and_track returns (final_x, trajectory) where trajectory has shape (T+1, N_TRACK, 2)
+    final_x_run, traj_run = sample_and_track(model, tracked_x_initial)
+    # make a CPU copy to avoid later device issues
+    repeated_trajs.append(traj_run.clone().cpu())
+
+# Create a figure with one subplot per run
+fig_exp2, axes_exp2 = plt.subplots(1, n_runs, figsize=(3 * n_runs, 4), sharex=True, sharey=True)
+fig_exp2.suptitle(f'Experiment 2: Stochasticity from Single Start ({n_runs} runs)', fontsize=14)
+axes_exp2 = np.atleast_1d(axes_exp2)
+
+# Compute KDE (prefer) or histogram once
+try:
+    from scipy.stats import gaussian_kde
+    data_for_kde = np.vstack([X[:, 0].numpy(), X[:, 1].numpy()])
+    kde = gaussian_kde(data_for_kde)
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200), np.linspace(y_min, y_max, 200))
+    grid_coords = np.vstack([xx.ravel(), yy.ravel()])
+    zz = kde(grid_coords).reshape(xx.shape)
+    use_kde_local = True
+except Exception:
+    H, xedges, yedges = np.histogram2d(X[:, 0].numpy(), X[:, 1].numpy(), bins=100, range=[[x_min, x_max], [y_min, y_max]], density=True)
+    Xc = 0.5 * (xedges[:-1] + xedges[1:])
+    Yc = 0.5 * (yedges[:-1] + yedges[1:])
+    Xc_grid, Yc_grid = np.meshgrid(Xc, Yc)
+    levels = np.linspace(H.min(), H.max(), 6)[1:]
+    use_kde_local = False
+
+run_cmap = matplotlib.colormaps.get_cmap('tab10')
+
+for r in range(n_runs):
+    ax = axes_exp2[r]
+    traj = repeated_trajs[r][:, 0, :]
+    x_r = traj[:, 0].numpy()
+    y_r = traj[:, 1].numpy()
+    color = run_cmap(r % 10)
+
+    # Plot path and endpoint in its own subplot
+    ax.plot(x_r, y_r, color=color, alpha=0.8, linewidth=1.5)
+    ax.plot(x_r[-1], y_r[-1], 'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=0.6, zorder=4)
+
+    # Overlay silhouette
+    if use_kde_local:
+        ax.contourf(xx, yy, zz, levels=10, cmap='Greys', alpha=0.35, zorder=1)
+    else:
+        ax.contourf(Xc_grid, Yc_grid, H.T, levels=levels, cmap='Greys', alpha=0.35, zorder=1)
+
+    ax.set_title(f'Run {r+1}', fontsize=12)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+timestamp_exp2 = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"diffusion_stochasticity_exp2_{timestamp_exp2}.png", dpi=300)
+plt.close(fig_exp2)
+print(f"Experiment 2 visualization saved to diffusion_stochasticity_exp2_{timestamp_exp2}.png")
 
 # # 6. Print one random sample
 
