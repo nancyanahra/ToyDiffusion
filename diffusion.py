@@ -434,9 +434,8 @@ print(f"\nTracking the trajectory of {N_TRACK} points...")
 final_tracked_samples, full_trajectory = sample_and_track(model, tracked_x_initial)
 print("Tracking complete.")
 
-# ----------------------------
 # TRAJECTORY VISUALIZATION (replacement)
-# ----------------------------
+
 # Multi-panel trajectories: show partial reverse paths truncated at several timesteps
 # We create 5 panels for timesteps ranging from T down to 0 so you can compare
 steps_to_plot = [T, 750, 500, 250, 0]
@@ -505,6 +504,73 @@ timestamp_multi = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"diffusion_trajectories_multistep_{timestamp_multi}.png", dpi=300)
 plt.close(fig_multi)
 print(f"Multi-step trajectory visualization saved to diffusion_trajectories_multistep_{timestamp_multi}.png")
+
+# Experiment 2: Analyze stochasticity from a single starting point
+# Run the reverse process multiple times from the exact same x_T and plot the different paths/endpoints
+
+# Number of repeated runs starting from the same initial noise point
+n_runs = 5
+repeated_trajs = []
+
+print(f"\nRunning Experiment 2: {n_runs} runs from the same starting point...")
+for run_idx in range(n_runs):
+    # sample_and_track returns (final_x, trajectory) where trajectory has shape (T+1, N_TRACK, 2)
+    final_x_run, traj_run = sample_and_track(model, tracked_x_initial)
+    # make a CPU copy to avoid later device issues
+    repeated_trajs.append(traj_run.clone().cpu())
+
+# Create a figure with one subplot per run
+fig_exp2, axes_exp2 = plt.subplots(1, n_runs, figsize=(3 * n_runs, 4), sharex=True, sharey=True)
+fig_exp2.suptitle(f'Experiment 2: Stochasticity from Single Start ({n_runs} runs)', fontsize=14)
+axes_exp2 = np.atleast_1d(axes_exp2)
+
+# Compute KDE (prefer) or histogram once
+try:
+    from scipy.stats import gaussian_kde
+    data_for_kde = np.vstack([X[:, 0].numpy(), X[:, 1].numpy()])
+    kde = gaussian_kde(data_for_kde)
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200), np.linspace(y_min, y_max, 200))
+    grid_coords = np.vstack([xx.ravel(), yy.ravel()])
+    zz = kde(grid_coords).reshape(xx.shape)
+    use_kde_local = True
+except Exception:
+    H, xedges, yedges = np.histogram2d(X[:, 0].numpy(), X[:, 1].numpy(), bins=100, range=[[x_min, x_max], [y_min, y_max]], density=True)
+    Xc = 0.5 * (xedges[:-1] + xedges[1:])
+    Yc = 0.5 * (yedges[:-1] + yedges[1:])
+    Xc_grid, Yc_grid = np.meshgrid(Xc, Yc)
+    levels = np.linspace(H.min(), H.max(), 6)[1:]
+    use_kde_local = False
+
+run_cmap = matplotlib.colormaps.get_cmap('tab10')
+
+for r in range(n_runs):
+    ax = axes_exp2[r]
+    traj = repeated_trajs[r][:, 0, :]
+    x_r = traj[:, 0].numpy()
+    y_r = traj[:, 1].numpy()
+    color = run_cmap(r % 10)
+
+    # Plot path and endpoint in its own subplot
+    ax.plot(x_r, y_r, color=color, alpha=0.8, linewidth=1.5)
+    ax.plot(x_r[-1], y_r[-1], 'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=0.6, zorder=4)
+
+    # Overlay silhouette
+    if use_kde_local:
+        ax.contourf(xx, yy, zz, levels=10, cmap='Greys', alpha=0.35, zorder=1)
+    else:
+        ax.contourf(Xc_grid, Yc_grid, H.T, levels=levels, cmap='Greys', alpha=0.35, zorder=1)
+
+    ax.set_title(f'Run {r+1}', fontsize=12)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+timestamp_exp2 = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"diffusion_stochasticity_exp2_{timestamp_exp2}.png", dpi=300)
+plt.close(fig_exp2)
+print(f"Experiment 2 visualization saved to diffusion_stochasticity_exp2_{timestamp_exp2}.png")
 
 # # 6. Print one random sample
 
