@@ -225,6 +225,10 @@ for epoch in range(n_epochs):
     if epoch % 200 == 0:
         print(f"Epoch {epoch}, Loss {loss.item():.4f}")
 
+# After training, save final model weights so plotting can be done separately
+torch.save(model.state_dict(), "denoise_model_final.pth")
+print("Saved final model to denoise_model_final.pth")
+
 """
         for t_visualize in [0, 50, 100,199]:
 
@@ -550,9 +554,12 @@ for r in range(n_runs):
     y_r = traj[:, 1].numpy()
     color = run_cmap(r % 10)
 
-    # Plot path and endpoint in its own subplot
-    ax.plot(x_r, y_r, color=color, alpha=0.8, linewidth=1.5)
-    ax.plot(x_r[-1], y_r[-1], 'o', color=color, markersize=8, markeredgecolor='black', markeredgewidth=0.6, zorder=4)
+    # Plot path (thinner) and clearly mark start and endpoint
+    ax.plot(x_r, y_r, color=color, alpha=0.8, linewidth=0.8)
+    # start marker (distinct, e.g., X)
+    ax.plot(x_r[0], y_r[0], marker='X', color='white', markersize=7, markeredgecolor=color, markeredgewidth=1.2, zorder=6)
+    # end marker (filled circle) emphasized
+    ax.plot(x_r[-1], y_r[-1], 'o', color=color, markersize=7, markeredgecolor='black', markeredgewidth=0.8, zorder=7)
 
     # Overlay silhouette
     if use_kde_local:
