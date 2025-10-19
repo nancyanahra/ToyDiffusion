@@ -21,7 +21,7 @@ def cleanup_files(patterns):
                 print(f"Error deleting file {file_path}: {e}")
 
 # Clean up old generated files
-cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png"])
+cleanup_files(["generated_data_t*.png", "two_moons_hist_*.png", "training_loss_*.png", "real_vs_generated_scatter_*.png"])
 
 # 1. GENERATE 2D two-moons data
 
@@ -298,6 +298,17 @@ W_distance = ot.sliced_wasserstein_distance(X.numpy(), samples_subset.numpy(),n_
 print(f"Sliced Wasserstein Distance (100 projections): {W_distance}")
 
 
+plt.figure(figsize=(8,6))
+plt.plot(X[:,0], X[:,1], '.', markersize=2, label='Real Two-Moons Data')
+plt.plot(samples_subset[:,0], samples_subset[:,1], '.', markersize=2, label='Generated Data')
+
+plt.legend(loc=0)
+plt.title(f"Real vs. Generated Samples (SWD: {W_distance:.6f})")
+
+# Save the figure
+plot_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"real_vs_generated_scatter_{plot_timestamp}.png", dpi=300)
+print(f"Saved scatter plot to real_vs_generated_scatter_{plot_timestamp}.png")
 # 7. 2D histogram
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
