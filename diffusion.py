@@ -9,6 +9,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.datasets import make_moons
 import torch
 import ot
+import numpy as np
+from scipy.stats import entropy
+from scipy.spatial.distance import jensenshannon
 
 
 def cleanup_files(patterns):
@@ -309,6 +312,84 @@ plt.title(f"Real vs. Generated Samples (SWD: {W_distance:.6f})")
 plot_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"real_vs_generated_scatter_{plot_timestamp}.png", dpi=300)
 print(f"Saved scatter plot to real_vs_generated_scatter_{plot_timestamp}.png")
+
+# convert tensors to numpy arrays
+X_np = X.cpu().numpy()
+samples_subset_np = samples_subset.cpu().numpy()
+n_bins = 50
+
+x_min = min(X_np[:,0].min(), samples_subset_np[:,0].min()) - 0.1
+x_max = max(X_np[:,0].max(), samples_subset_np[:,0].max()) + 0.1
+y_min = min(X_np[:,1].min(), samples_subset_np[:,1].min()) - 0.1
+y_max = max(X_np[:,1].max(), samples_subset_np[:,1].max()) + 0.1
+hist_range = [[x_min, x_max], [y_min, y_max]]
+
+real_hist_counts, _, _ = np.histogram2d(X_np[:,0], X_np[:,1], bins=n_bins, range=hist_range)
+
+fake_hist_counts, _, _ = np.histogram2d(samples_subset_np[:,0], samples_subset_np[:,1], bins=n_bins, range=hist_range)
+
+# Normalize histograms to get probability distributions
+real_hist_probs = real_hist_counts / real_hist_counts.sum()
+fake_hist_probs = fake_hist_counts / fake_hist_counts.sum()
+
+P = real_hist_probs.flatten() + 1e-10  # add small constant to avoid log(0)
+Q = fake_hist_probs.flatten() + 1e-10  # add small constant to avoid log(0)
+
+kl_div = entropy(P, Q)
+js_div = jensenshannon(P, Q, base=2)**2  # square to get JS divergence
+
+print(f"--- KL Divergence: {kl_div:.6f} ---")
+print(f"--- JS Divergence: {js_div:.6f} ---")
+print("(For KL and JS, 0 is a perfect match between real and generated distributions)")
+
+plt.figure(figsize=(14,6))
+
+plt.subplot(1, 2, 1)
+
+plt.imshow(real_hist_probs.T, origin='lower', extent=(x_min, x_max, y_min, y_max), aspect='auto', cmap='viridis')
+plt.colorbar(label='Probability Density')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('Real Data Histogram')
+
+plt.subplot(1, 2, 2) # (1 row, 2 columns, 2nd plot)
+
+plt.imshow(fake_hist_probs.T, 
+           origin='lower', 
+           aspect='auto',
+           extent=[x_min, x_max, y_min, y_max],
+           cmap='viridis')
+
+plt.colorbar(label='Probability Density')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('Generated Data Distribution (Q)')
+
+# Save the combined figure
+hist_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"kl_js_histograms_{hist_timestamp}.png", dpi=300)
+print(f"Saved histogram comparison to kl_js_histograms_{hist_timestamp}.png")
+
+metrics = ['KL Divergence', 'JS Divergence']
+# The values you calculated
+values = [kl_div, js_div]
+
+plt.figure(figsize=(8, 6))
+bars = plt.bar(metrics, values, color=['salmon', 'lightgreen'])
+
+# add the value label on top of each bar
+plt.bar_label(bars, fmt='%.4f')
+
+plt.title('Final Model Evaluation Metrics')
+plt.ylabel('Score (Lower is Better)')
+# Give some space at the top
+plt.ylim(0, max(values) * 1.2) 
+
+# save the figure
+bar_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+plt.savefig(f"final_metrics_barchart_{bar_timestamp}.png", dpi=300)
+print(f"Saved bar chart to final_metrics_barchart_{bar_timestamp}.png")
+
 # 7. 2D histogram
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
