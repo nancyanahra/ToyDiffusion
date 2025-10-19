@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.datasets import make_moons
+import torch
+import ot
 
 
 def cleanup_files(patterns):
@@ -41,7 +43,7 @@ plt.title("Two Moons Dataset")
 # 2. DEFINE DIFFUSION SCHEDULE
 
 # this is the total number of times we will add a tiny bit of noise (scalar int)
-T = 200  # number of diffusion steps
+T = 1000  # number of diffusion steps
 # Beta creates a 1d tensor of length T (200) with values linearly spaced from 0.0001 to 0.02
 # Each value represents the variance of the noise added at each diffusion step
 # Smaller values at the start, larger at the end;larger noise as we progress through diffusion steps
@@ -205,8 +207,6 @@ plt.grid(True)
 timestamp_loss = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
 
-plt.show()
-plt.close()
 
     
 
@@ -253,7 +253,8 @@ def sample(model, n_samples):
         if t > 0:
             x += torch.sqrt(beta_t) * torch.randn_like(x) ###
 
-        if t in [199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
+        if t in [999, 750, 500, 300, 199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
+        #if t in [199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
             #plt.scatter(x[:,0], x[:,1], s=2)
             #plt.title(f"Generated Data at Timestep {t}")
             #plt.savefig(f"generated_data_t{t}.png", dpi=300)
@@ -281,9 +282,20 @@ samples = sample(model, 200000)
 
 print("One sample from generated data:", samples[torch.randint(0, samples.shape[0], (1,))])
 
+#Wasserstein distance between real and generated data
+
+print("Calculating Wassersteind distance between real and generated data")
 
 
+n_real_samples =X.shape[0]
+n_projections = 100
+indices = torch.randperm(samples.shape[0])[:n_real_samples ]
+samples_subset = samples[indices]
 
+print(f"comparing {n_real_samples} real samples to {samples_subset.shape[0]} generated samples")
+
+W_distance = ot.sliced_wasserstein_distance(X.numpy(), samples_subset.numpy(),n_projections=n_projections)
+print(f"Sliced Wasserstein Distance (100 projections): {W_distance}")
 
 
 # 7. 2D histogram
