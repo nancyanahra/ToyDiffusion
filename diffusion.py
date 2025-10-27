@@ -50,7 +50,29 @@ T = 1000  # number of diffusion steps
 # Beta creates a 1d tensor of length T (200) with values linearly spaced from 0.0001 to 0.02
 # Each value represents the variance of the noise added at each diffusion step
 # Smaller values at the start, larger at the end;larger noise as we progress through diffusion steps
-beta = torch.linspace(1e-4, 0.02, T)  # noise schedule  ##1
+#beta = torch.linspace(1e-4, 0.02, T)  # noise schedule  ##1
+
+
+def cosine_beta_schedule(T, s=0.008):
+    """
+    cosine schedule  from https://arxiv.org/abs/2102.09672
+
+    args:
+        T (int): Total number of timesteps
+        s (float): Small offset to prevent beta from being too small near t=0
+
+    returns:
+        torch.Tensor: Beta schedule of shape (T,)
+    """
+    steps = T + 1
+    x = torch.linspace(0, T, steps)
+    alphas_cumprod = torch.cos(((x / T) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clamp(betas, 0.0001, 0.9999).float()
+
+
+beta = cosine_beta_schedule(T)  # shape: (200,)
 # Alpha is 1 minus beta, representing the portion of the original data retained at each step
 # it controls how much of the previous signal you keep at each step.
 # it is also a (200,) tensor
@@ -313,6 +335,7 @@ plot_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 plt.savefig(f"real_vs_generated_scatter_{plot_timestamp}.png", dpi=300)
 print(f"Saved scatter plot to real_vs_generated_scatter_{plot_timestamp}.png")
 
+# working on KL and JS divergence now
 # convert tensors to numpy arrays
 X_np = X.cpu().numpy()
 samples_subset_np = samples_subset.cpu().numpy()
@@ -336,9 +359,12 @@ P = real_hist_probs.flatten() + 1e-10  # add small constant to avoid log(0)
 Q = fake_hist_probs.flatten() + 1e-10  # add small constant to avoid log(0)
 
 kl_div = entropy(P, Q)
+kl_div2 = entropy(Q, P)
+#calculate entropy P, Q
 js_div = jensenshannon(P, Q, base=2)**2  # square to get JS divergence
 
 print(f"--- KL Divergence: {kl_div:.6f} ---")
+print(f"--- KL Divergence: {kl_div2:.6f} ---")
 print(f"--- JS Divergence: {js_div:.6f} ---")
 print("(For KL and JS, 0 is a perfect match between real and generated distributions)")
 
@@ -401,3 +427,4 @@ plt.xlabel('x')
 plt.ylabel('y')
 plt.title('2D Histogram of Generated Samples')
 plt.savefig(f"two_moons_hist_{timestamp}.png", dpi=300)
+plt.close()
