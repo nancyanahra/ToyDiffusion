@@ -256,6 +256,9 @@ plt.savefig(os.path.join(output_dir, "training_loss.png"), dpi=300)
 @torch.no_grad()
 def sample(model, n_samples):
     x = torch.randn(n_samples, 2)  # start from pure noise
+    # collect snapshots for selected timesteps and plot them later as a grid
+    snapshots = {}
+    snapshot_timesteps = [999, 750, 500, 300, 199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]
     #loop over timesteps in reverse order
     for t in reversed(range(T)):
         # Create a 1-D tesnor of length n_samples, where all entries == current timestep t
@@ -286,24 +289,45 @@ def sample(model, n_samples):
         if t > 0:
             x += torch.sqrt(beta_t) * torch.randn_like(x) ###
 
-        if t in [999, 750, 500, 300, 199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
-        #if t in [199, 150, 100, 50, 40, 30, 20, 15, 10, 5, 0]:
-            #plt.scatter(x[:,0], x[:,1], s=2)
-            #plt.title(f"Generated Data at Timestep {t}")
-            #plt.savefig(f"generated_data_t{t}.png", dpi=300)
-            #plt.close()
-            plt.figure(figsize=(8,6))
-            plt.hist2d(x[:,0].numpy(), x[:,1].numpy(), bins=100, density=True, cmap='viridis')
-            plt.colorbar(label='Density')
-            plt.xlabel('x')
-            plt.ylabel('y')
-            plt.title(f"Generated Data at Timestep {t}")
-            plt.savefig(os.path.join(output_dir,f"generated_data_t{t}.png"), dpi=300)
+        if t in snapshot_timesteps:
+            # store a CPU copy of the current samples for later plotting
+            snapshots[int(t)] = x.clone().detach().cpu()
 
      
 
     
-    #finally, return the generated samples after all timesteps
+    # After sampling, if we collected snapshots, assemble them into a single grid figure
+    if len(snapshots) > 0:
+        # preserve the original ordering from snapshot_timesteps
+        times = [t for t in snapshot_timesteps if t in snapshots]
+        n = len(times)
+        ncols = int(np.ceil(np.sqrt(n)))
+        nrows = int(np.ceil(n / ncols))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows))
+        # flatten axes to a list for easy indexing
+        if isinstance(axes, np.ndarray):
+            axes_list = axes.ravel()
+        else:
+            axes_list = [axes]
+
+        for idx, t in enumerate(times):
+            ax = axes_list[idx]
+            x_t = snapshots[t]
+            h = ax.hist2d(x_t[:, 0].numpy(), x_t[:, 1].numpy(), bins=100, density=True, cmap='viridis')
+            ax.set_title(f'Timestep {t}')
+            ax.set_xlabel('x')
+            ax.set_ylabel('y')
+
+        # turn off any extra axes
+        for ax in axes_list[n:]:
+            ax.axis('off')
+
+        out_name = os.path.join(output_dir, f"generated_data_snapshots_{run_timestamp}.png")
+        plt.tight_layout()
+        plt.savefig(out_name, dpi=300)
+        plt.close(fig)
+
+    # finally, return the generated samples after all timesteps
     # x should now be a (n_samples, 2) tensor of generated 2d points that look like the two-moons data even though they started as pure noise
     return x
 
@@ -402,7 +426,7 @@ plt.title('Generated Data Distribution (Q)')
 # Save the combined figure
 
 plt.savefig(os.path.join(output_dir,"kl_js_histograms.png"), dpi=300)
-print(f"Saved histogram comparison to kl_js_histograms_{hist_timestamp}.png")
+
 
 metrics = ['KL Divergence', 'JS Divergence']
 # The values you calculated
