@@ -13,6 +13,14 @@ import numpy as np
 from scipy.stats import entropy
 from scipy.spatial.distance import jensenshannon
 
+run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_dir = f"run_{run_timestamp}"
+
+try:
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Created output directory: {output_dir}")    
+except Exception as e:
+    print(f"Error creating output directory {output_dir}: {e}") 
 
 def cleanup_files(patterns):
     for pattern in patterns:
@@ -229,8 +237,8 @@ plt.xlabel('Epoch')
 plt.ylabel('Mean Squared Error (MSE) Loss')
 plt.grid(True)
 # Save the plot with a timestamp
-timestamp_loss = datetime.now().strftime("%Y%m%d_%H%M%S")
-plt.savefig(f"training_loss_{timestamp_loss}.png", dpi=300)
+
+plt.savefig(os.path.join(output_dir, "training_loss.png"), dpi=300)
 
 
     
@@ -290,7 +298,7 @@ def sample(model, n_samples):
             plt.xlabel('x')
             plt.ylabel('y')
             plt.title(f"Generated Data at Timestep {t}")
-            plt.savefig(f"generated_data_t{t}.png", dpi=300)
+            plt.savefig(os.path.join(output_dir,f"generated_data_t{t}.png"), dpi=300)
 
      
 
@@ -331,9 +339,9 @@ plt.legend(loc=0)
 plt.title(f"Real vs. Generated Samples (SWD: {W_distance:.6f})")
 
 # Save the figure
-plot_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-plt.savefig(f"real_vs_generated_scatter_{plot_timestamp}.png", dpi=300)
-print(f"Saved scatter plot to real_vs_generated_scatter_{plot_timestamp}.png")
+
+plt.savefig(os.path.join(output_dir,"real_vs_generated_scatter_.png"), dpi=300)
+
 
 # working on KL and JS divergence now
 # convert tensors to numpy arrays
@@ -392,8 +400,8 @@ plt.ylabel('y')
 plt.title('Generated Data Distribution (Q)')
 
 # Save the combined figure
-hist_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-plt.savefig(f"kl_js_histograms_{hist_timestamp}.png", dpi=300)
+
+plt.savefig(os.path.join(output_dir,"kl_js_histograms.png"), dpi=300)
 print(f"Saved histogram comparison to kl_js_histograms_{hist_timestamp}.png")
 
 metrics = ['KL Divergence', 'JS Divergence']
@@ -412,13 +420,13 @@ plt.ylabel('Score (Lower is Better)')
 plt.ylim(0, max(values) * 1.2) 
 
 # save the figure
-bar_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-plt.savefig(f"final_metrics_barchart_{bar_timestamp}.png", dpi=300)
-print(f"Saved bar chart to final_metrics_barchart_{bar_timestamp}.png")
+
+plt.savefig(os.path.join(output_dir,"final_metrics_barchart.png"), dpi=300)
+
 
 # 7. 2D histogram
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 
 plt.figure(figsize=(8,6))
 plt.hist2d(samples[:,0].numpy(), samples[:,1].numpy(), bins=100, density=True, cmap='viridis')
@@ -426,5 +434,5 @@ plt.colorbar(label='Density')
 plt.xlabel('x')
 plt.ylabel('y')
 plt.title('2D Histogram of Generated Samples')
-plt.savefig(f"two_moons_hist_{timestamp}.png", dpi=300)
+plt.savefig(os.path.join(output_dir,"two_moons_hist.png"), dpi=300)
 plt.close()
