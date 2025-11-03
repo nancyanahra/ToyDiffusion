@@ -294,9 +294,8 @@ def sample(model, n_samples):
             snapshots[int(t)] = x.clone().detach().cpu()
 
      
-
     
-    # After sampling, if we collected snapshots, assemble them into a single grid figure
+    # put collected snapshots into a single grid figure
     if len(snapshots) > 0:
         # preserve the original ordering from snapshot_timesteps
         times = [t for t in snapshot_timesteps if t in snapshots]
@@ -460,3 +459,102 @@ plt.ylabel('y')
 plt.title('2D Histogram of Generated Samples')
 plt.savefig(os.path.join(output_dir,"two_moons_hist.png"), dpi=300)
 plt.close()
+
+
+
+# function to track a sigle trajectory through the diffusion process
+
+@torch.no_grad()
+def generate_single_trajectory(model, start_noise, T):
+    model.eval()
+    x = start_noise.clone()
+    trajectory = [x.clone().detach().cpu()] # store the starting point
+
+
+    for t in reversed(range(T)):
+        t_batch = torch.full((1,), t, dtype=torch.float32)
+        predicted_noise = model(x, t_batch)
+        alpha_t = alpha[t]
+        alpha_bar_t = alpha_bar[t]
+        beta_t = beta[t]
+        mu_tilde = 1 / torch.sqrt(alpha_t) * (x - (1 - alpha_t) / torch.sqrt(1 - alpha_bar_t) * predicted_noise)
+        if t > 0:
+            z = torch.randn_like(x)
+            x = mu_tilde + torch.sqrt(beta_t) * z
+        else:
+            x = mu_tilde
+        trajectory.append(x.clone().detach().cpu())
+    
+    return torch.cat(trajectory, dim=0)  # shape (T+1, 2)
+
+
+
+# Stage for stochastic trajectory plot
+
+n_runs = 5
+
+#defining a starting noise vector to reuse for all 6 runs
+# shape is (1,2) for a single 2d point
+
+start_noise_vector = torch.rand(1,2)
+
+#run the experiement
+all_trajectories = []
+for _ in range(n_runs):
+    trajectory = generate_single_trajectory(model, start_noise_vector, T)
+    all_trajectories.append(trajectory)
+
+# plot the trajectories
+
+fig, axes = plt.subplots(1,n_runs, figsize=(20,4),sharex=True, sharey=True)
+fig.suptitle("Experiment: Stochasticity in Reverse Diffusion Trajectories from a Single Start", fontsize=16)
+
+x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
+y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+plot_range = [[x_min, x_max], [y_min, y_max]]
+
+colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+
+for i in range(n_runs):
+    ax = axes[i]
+    numpy_trajectory = all_trajectories[i].numpy()
+
+    #plot the background real data
+    ax.hist2d(
+        X[:, 0].numpy(), 
+        X[:, 1].numpy(), 
+        bins=100, 
+        cmap='Greys', 
+        density=True, 
+        alpha=0.6,
+        range=plot_range
+    )
+
+    # Plot the trajectory path
+    ax.plot(
+        numpy_trajectory[:, 0], 
+        numpy_trajectory[:, 1], 
+        color=colors[i], 
+        lw=1
+    )
+
+    #plot start and end points
+    ax.plot(
+        numpy_trajectory[0, 0], numpy_trajectory[0, 1], 
+        'o', color='black', markersize=4, label='Start (Noise)'
+    ) # Start
+    ax.plot(
+        numpy_trajectory[-1, 0], numpy_trajectory[-1, 1], 
+        'x', color=colors[i], markersize=6, mew=2, label='End (Generated)'
+    ) # End
+
+    ax.set_title(f"Run {i+1}")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+# Save the final plot
+plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust for suptitle
+plt.savefig(os.path.join(output_dir, "stochastic_trajectories.png"), dpi=300)
+plt.close(fig)
